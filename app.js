@@ -19,7 +19,7 @@ const textForm = document.getElementById('text-form');
 const textInput = document.getElementById('text-input');
 
 const LAND_START_TIME_SEC = 0;
-const LAND_FLIGHT_PHASE_SEC = 4.0;
+const LAND_FLIGHT_PHASE_SEC = 2.9;
 const HORIZONTAL_NORMAL_MIN_Y = 0.85;
 const AUTO_PLACE_FRAMES = 6;
 const AR_CROW_SCALE = 0.5;
@@ -389,12 +389,25 @@ function onXRSessionEnd() {
 
 function placeCrowAtMatrix(matrix) {
   hitPos.setFromMatrixPosition(matrix);
-  crowAnchor.position.copy(hitPos);
 
   const xrCamera = renderer.xr.getCamera();
   xrCamera.getWorldPosition(camWorldPos);
-  const yaw = Math.atan2(camWorldPos.x - hitPos.x, camWorldPos.z - hitPos.z);
-  crowAnchor.rotation.set(0, yaw, 0);
+  const toCamX = camWorldPos.x - hitPos.x;
+  const toCamZ = camWorldPos.z - hitPos.z;
+  const toCamLen = Math.hypot(toCamX, toCamZ) || 1;
+  // Spawn 0.55m off to the right side so initial entry swoops in from the side.
+  const rightX = toCamZ / toCamLen;
+  const rightZ = -toCamX / toCamLen;
+  crowAnchor.position.set(
+    hitPos.x + rightX * 0.55,
+    hitPos.y + 0.15,
+    hitPos.z + rightZ * 0.55
+  );
+  crowAnchor.rotation.set(
+    0,
+    Math.atan2(hitPos.x - crowAnchor.position.x, hitPos.z - crowAnchor.position.z),
+    0
+  );
   crowAnchor.scale.setScalar(AR_CROW_SCALE);
 
   crowAnchor.visible = true;
@@ -402,7 +415,7 @@ function placeCrowAtMatrix(matrix) {
   arHint.hidden = true;
   reticle.material.color.setHex(0x38bdf8);
 
-  playLandingSequence();
+  flyCrowTo(hitPos);
 }
 
 function flyCrowTo(targetPos) {
@@ -425,6 +438,7 @@ function flyCrowTo(targetPos) {
     startYaw: crowAnchor.rotation.y,
     flightYaw,
     endYaw,
+    arcHeight: THREE.MathUtils.clamp(dist * 0.25, 0.08, 0.26),
   };
 
   playLandingSequence();
@@ -491,30 +505,34 @@ function renderFrame(_timestamp, frame) {
   }
 
   if (isLanding && flightState && actions.land) {
-    const u = THREE.MathUtils.clamp(
-      actions.land.time / LAND_FLIGHT_PHASE_SEC,
-      0,
-      1
-    );
+    const t = actions.land.time;
+    const u = THREE.MathUtils.clamp(t / LAND_FLIGHT_PHASE_SEC, 0, 1);
     const ease = u * u * (3 - 2 * u);
     crowAnchor.position.lerpVectors(
       flightState.startPos,
       flightState.targetPos,
       ease
     );
-    crowAnchor.position.y += Math.sin(Math.PI * u) * 0.14;
+    crowAnchor.position.y += Math.sin(Math.PI * u) * flightState.arcHeight;
 
-    if (u < 0.7) {
+    if (t < LAND_FLIGHT_PHASE_SEC) {
+      const takeoffTurn = Math.min(1, t / 0.25);
       crowAnchor.rotation.y = lerpAngle(
         flightState.startYaw,
         flightState.flightYaw,
-        Math.min(1, u / 0.25)
+        takeoffTurn
       );
     } else {
+      const landTurn = THREE.MathUtils.clamp(
+        (t - LAND_FLIGHT_PHASE_SEC) / 1.2,
+        0,
+        1
+      );
+      const landEase = landTurn * landTurn * (3 - 2 * landTurn);
       crowAnchor.rotation.y = lerpAngle(
         flightState.flightYaw,
         flightState.endYaw,
-        (u - 0.7) / 0.3
+        landEase
       );
     }
   }
