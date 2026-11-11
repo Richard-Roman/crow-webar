@@ -21,6 +21,7 @@ const textInput = document.getElementById('text-input');
 const LAND_START_TIME_SEC = 0;
 const HORIZONTAL_NORMAL_MIN_Y = 0.85;
 const AUTO_PLACE_FRAMES = 6;
+const AR_CROW_SCALE = 0.5;
 
 const SpeechRecognitionCtor =
   window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -349,6 +350,7 @@ function onXRSessionEnd() {
   crowAnchor.visible = true;
   crowAnchor.position.set(0, 0, 0);
   crowAnchor.rotation.set(0, 0, 0);
+  crowAnchor.scale.setScalar(1);
   controls.enabled = true;
 
   camBtn.hidden = false;
@@ -366,6 +368,7 @@ function placeCrowAtMatrix(matrix) {
   xrCamera.getWorldPosition(camWorldPos);
   const yaw = Math.atan2(camWorldPos.x - hitPos.x, camWorldPos.z - hitPos.z);
   crowAnchor.rotation.set(0, yaw, 0);
+  crowAnchor.scale.setScalar(AR_CROW_SCALE);
 
   crowAnchor.visible = true;
   reticle.visible = false;
