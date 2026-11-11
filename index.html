@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Crow WebXR Hit-Test AR</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main class="app">
+    <video id="camera-bg" autoplay playsinline muted></video>
+    <canvas id="xr-canvas"></canvas>
+
+    <!-- Passed as WebXR domOverlay.root so controls remain interactive in AR -->
+    <div id="ui-overlay" class="ui-overlay">
+      <div class="overlay-top">
+        <span class="status-pill" id="status-pill">Loading crow...</span>
+        <select id="lang-select" class="lang-select" aria-label="Speech language">
+          <option value="es-ES">ES</option>
+          <option value="en-US" selected>EN</option>
+        </select>
+      </div>
+
+      <div class="top-actions">
+        <button type="button" id="ar-btn" class="action-btn primary-btn" disabled>
+          Start AR
+        </button>
+        <button type="button" id="cam-btn" class="action-btn secondary-btn">
+          Camera On
+        </button>
+        <button type="button" id="land-btn" class="action-btn secondary-btn" disabled>
+          Fly &amp; Land
+        </button>
+      </div>
+
+      <div class="ar-hint" id="ar-hint" hidden>
+        Move your phone slowly over a floor or table...
+      </div>
+
+      <div class="overlay-bottom">
+        <p class="transcript" id="transcript" hidden></p>
+
+        <div class="controls-row">
+          <button type="button" id="talk-btn" class="talk-btn" disabled>
+            Tap to Speak
+          </button>
+          <button type="button" id="test-voice-btn" class="secondary-btn" disabled>
+            Test Voice
+          </button>
+        </div>
+
+        <form id="text-form" class="text-form">
+          <input
+            id="text-input"
+            type="text"
+            placeholder="Or type a message..."
+            autocomplete="off"
+          />
+          <button type="submit" class="send-btn">Send</button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
