@@ -19,6 +19,7 @@ const textForm = document.getElementById('text-form');
 const textInput = document.getElementById('text-input');
 
 const LAND_START_TIME_SEC = 0;
+const LAND_FLIGHT_PHASE_SEC = 4.0;
 const HORIZONTAL_NORMAL_MIN_Y = 0.85;
 const AUTO_PLACE_FRAMES = 6;
 const AR_CROW_SCALE = 0.5;
@@ -37,6 +38,7 @@ let mixer = null;
 const actions = {};
 let activeAction = null;
 let isLanding = false;
+let flightState = null;
 
 let xrSession = null;
 let hitTestSource = null;
@@ -52,6 +54,10 @@ const clock = new THREE.Clock();
 const hitMatrix = new THREE.Matrix4();
 const hitPos = new THREE.Vector3();
 const camWorldPos = new THREE.Vector3();
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const planeHit = new THREE.Vector3();
 
 initLanguage();
 initScene();
@@ -119,15 +125,19 @@ function initScene() {
   crowAnchor = new THREE.Group();
   scene.add(crowAnchor);
 
-  const reticleGeo = new THREE.RingGeometry(0.1, 0.13, 32).rotateX(-Math.PI / 2);
+  const reticleGeo = new THREE.RingGeometry(0.08, 0.11, 32).rotateX(-Math.PI / 2);
   const reticleMat = new THREE.MeshBasicMaterial({
     color: 0x10b981,
+    transparent: true,
+    opacity: 0.8,
     side: THREE.DoubleSide,
   });
   reticle = new THREE.Mesh(reticleGeo, reticleMat);
   reticle.matrixAutoUpdate = false;
   reticle.visible = false;
   scene.add(reticle);
+
+  renderer.xr.getController(0).addEventListener('select', onXRSelect);
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -151,8 +161,13 @@ function loadCrowModel() {
       mixer.addEventListener('finished', (event) => {
         if (event.action === actions.land) {
           isLanding = false;
+          if (flightState) {
+            crowAnchor.position.copy(flightState.targetPos);
+            crowAnchor.rotation.y = flightState.endYaw;
+            flightState = null;
+          }
           fadeToAction('idle', 0.35);
-          setStatus(xrSession ? 'AR perched: tap to speak' : 'Ready');
+          setStatus(xrSession ? 'AR perched · Aim ring & tap to fly' : 'Ready');
         }
       });
 
@@ -307,9 +322,6 @@ async function toggleARSession() {
 
     session.addEventListener('end', onXRSessionEnd);
 
-    const controller = renderer.xr.getController(0);
-    controller.addEventListener('select', onXRSelect);
-
     renderer.xr.setReferenceSpaceType('local');
     await renderer.xr.setSession(session);
 
@@ -323,18 +335,31 @@ async function toggleARSession() {
   }
 }
 
+function lerpAngle(a, b, t) {
+  const diff = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + diff * t;
+}
+
 function resetARPlacement() {
   hasPlacedInAR = false;
   horizontalHitStreak = 0;
+  flightState = null;
+  isLanding = false;
   crowAnchor.visible = false;
   reticle.visible = false;
+  reticle.material.color.setHex(0x10b981);
   arHint.hidden = false;
 }
 
 function onXRSelect() {
-  if (!xrSession || hasPlacedInAR || !reticle.visible) return;
+  if (!xrSession || !reticle.visible) return;
   hitMatrix.copy(reticle.matrix);
-  placeCrowAtMatrix(hitMatrix);
+  if (!hasPlacedInAR) {
+    placeCrowAtMatrix(hitMatrix);
+    return;
+  }
+  hitPos.setFromMatrixPosition(hitMatrix);
+  flyCrowTo(hitPos);
 }
 
 function onXRSessionEnd() {
@@ -343,6 +368,8 @@ function onXRSessionEnd() {
   hitTestRequested = false;
   hasPlacedInAR = false;
   horizontalHitStreak = 0;
+  flightState = null;
+  isLanding = false;
 
   reticle.visible = false;
   arHint.hidden = true;
@@ -371,15 +398,40 @@ function placeCrowAtMatrix(matrix) {
   crowAnchor.scale.setScalar(AR_CROW_SCALE);
 
   crowAnchor.visible = true;
-  reticle.visible = false;
   hasPlacedInAR = true;
   arHint.hidden = true;
+  reticle.material.color.setHex(0x38bdf8);
+
+  playLandingSequence();
+}
+
+function flyCrowTo(targetPos) {
+  const startPos = crowAnchor.position.clone();
+  const dist = startPos.distanceTo(targetPos);
+  const activeCam = xrSession ? renderer.xr.getCamera() : camera;
+  activeCam.getWorldPosition(camWorldPos);
+  const endYaw = Math.atan2(
+    camWorldPos.x - targetPos.x,
+    camWorldPos.z - targetPos.z
+  );
+  const flightYaw =
+    dist > 0.05
+      ? Math.atan2(targetPos.x - startPos.x, targetPos.z - startPos.z)
+      : endYaw;
+
+  flightState = {
+    startPos,
+    targetPos: targetPos.clone(),
+    startYaw: crowAnchor.rotation.y,
+    flightYaw,
+    endYaw,
+  };
 
   playLandingSequence();
 }
 
 function processHitTest(frame) {
-  if (!xrSession || hasPlacedInAR) return;
+  if (!xrSession) return;
 
   if (!hitTestRequested) {
     hitTestRequested = true;
@@ -423,10 +475,12 @@ function processHitTest(frame) {
 
   reticle.visible = true;
   reticle.matrix.copy(hitMatrix);
-  horizontalHitStreak += 1;
 
-  if (horizontalHitStreak >= AUTO_PLACE_FRAMES) {
-    placeCrowAtMatrix(hitMatrix);
+  if (!hasPlacedInAR) {
+    horizontalHitStreak += 1;
+    if (horizontalHitStreak >= AUTO_PLACE_FRAMES) {
+      placeCrowAtMatrix(hitMatrix);
+    }
   }
 }
 
@@ -434,6 +488,35 @@ function renderFrame(_timestamp, frame) {
   const delta = clock.getDelta();
   if (mixer) {
     mixer.update(delta);
+  }
+
+  if (isLanding && flightState && actions.land) {
+    const u = THREE.MathUtils.clamp(
+      actions.land.time / LAND_FLIGHT_PHASE_SEC,
+      0,
+      1
+    );
+    const ease = u * u * (3 - 2 * u);
+    crowAnchor.position.lerpVectors(
+      flightState.startPos,
+      flightState.targetPos,
+      ease
+    );
+    crowAnchor.position.y += Math.sin(Math.PI * u) * 0.14;
+
+    if (u < 0.7) {
+      crowAnchor.rotation.y = lerpAngle(
+        flightState.startYaw,
+        flightState.flightYaw,
+        Math.min(1, u / 0.25)
+      );
+    } else {
+      crowAnchor.rotation.y = lerpAngle(
+        flightState.flightYaw,
+        flightState.endYaw,
+        (u - 0.7) / 0.3
+      );
+    }
   }
 
   if (xrSession && frame) {
@@ -496,7 +579,7 @@ function speak(text) {
       fadeToAction('idle', 0.25);
     }
     talkBtn.classList.remove('is-speaking');
-    setStatus(xrSession ? 'AR active' : 'Ready');
+    setStatus(xrSession ? 'AR perched · Aim ring & tap to fly' : 'Ready');
   };
 
   utterance.onstart = () => {
@@ -567,11 +650,32 @@ function setupControls() {
     }
   });
 
+  let downX = 0;
+  let downY = 0;
+  canvas.addEventListener('pointerdown', (event) => {
+    downX = event.clientX;
+    downY = event.clientY;
+  });
+  canvas.addEventListener('pointerup', (event) => {
+    if (xrSession || !actions.land) return;
+    if (Math.hypot(event.clientX - downX, event.clientY - downY) > 6) return;
+
+    pointerNdc.x = (event.clientX / window.innerWidth) * 2 - 1;
+    pointerNdc.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointerNdc, camera);
+    if (raycaster.ray.intersectPlane(groundPlane, planeHit)) {
+      planeHit.x = THREE.MathUtils.clamp(planeHit.x, -1.0, 1.0);
+      planeHit.z = THREE.MathUtils.clamp(planeHit.z, -1.0, 1.0);
+      flyCrowTo(planeHit);
+    }
+  });
+
   landBtn.addEventListener('click', () => {
     if (xrSession) {
       resetARPlacement();
       setStatus('Scanning for floor or table...');
     } else {
+      flightState = null;
       playLandingSequence();
     }
   });
